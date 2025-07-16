@@ -1,347 +1,265 @@
-# Alex - AI Voice Dental Clinic Assistant 🦷🤖
+# Enhanced AI Voice Assistant for SmileRight Dental Clinic
 
-Alex is an intelligent voice assistant designed specifically for dental clinics to handle appointment bookings and customer inquiries through natural voice conversations. Built with LiveKit's real-time communication platform, Alex provides a seamless, human-like interaction experience for dental clinic patients.
+## Overview
 
-## 🌟 Features
+This enhanced AI voice assistant provides comprehensive patient management, appointment scheduling, and treatment information services for SmileRight Dental Clinic. The system now includes patient identification workflows, a knowledge base with treatment pricing, and calendar integration.
 
-### Core Functionality
-- **Real-time Voice Conversations**: Natural speech-to-speech interactions using advanced AI
-- **Appointment Booking**: Complete booking workflow with customer information collection
-- **Multi-Agent System**: Intelligent conversation flow between specialized agents
-- **Business Hours Validation**: Automatically validates appointments against clinic operating hours
-- **Customer Data Management**: Securely collects and stores customer information
+## New Features
 
-### Technical Capabilities
-- **Advanced Speech Processing**: 
-  - OpenAI GPT-4o-mini for natural language understanding
-  - Deepgram Nova-3 for accurate speech recognition
-  - OpenAI TTS with natural voice synthesis
-- **Real-time Features**:
-  - Voice activity detection (VAD)
-  - Noise cancellation
-  - Multilingual turn detection
-- **Performance Optimizations**:
-  - Async database operations with batch processing
-  - In-memory metrics for real-time monitoring
-  - Optimized conversation logging
-- **Comprehensive Logging**:
-  - Full conversation transcripts
-  - Performance metrics collection
-  - Agent transfer tracking
-  - Session analytics
+### 1. Patient Identification & Management
+- **Patient Detection**: Automatically determines if caller is new or returning patient
+- **Patient Verification**: Verifies returning patients using phone number and date of birth
+- **Patient Registration**: Creates new patient records with minimal required information
+- **Patient Database**: Stores patient information securely with privacy considerations
 
-### Clinic Information
-- **SmileRight Dental Clinic**
-- **Location**: 5561 St-Denis Street, Montreal, Canada
-- **Hours**: Monday to Friday, 8:00 AM - 12:00 PM and 1:00 PM - 6:00 PM
-- **Closed**: Weekends
+### 2. Enhanced Agent Workflow
+```
+Greeter → PatientIdentificationAgent → {
+    Returning Patient → PatientLookupAgent → {
+        Found → BookingAgent/InfoAgent
+        Not Found → RegistrationAgent
+    }
+    New Patient → RegistrationAgent → {
+        Information Intent → InfoAgent
+        Booking Intent → EnhancedBookingAgent
+    }
+}
+```
 
-## 🚀 Installation
+### 3. Treatment Knowledge Base
+- **Comprehensive Treatment Database**: 11 common dental treatments with pricing
+- **Price Ranges**: Realistic pricing for Montreal dental market
+- **Treatment Categories**: Preventive, diagnostic, restorative, endodontic, cosmetic, surgical, periodontal
+- **Search Functionality**: Search treatments by keyword or category
+
+### 4. Calendar Integration
+- **Availability Checking**: Validates appointment times against clinic hours
+- **Conflict Detection**: Prevents double-booking
+- **Alternative Suggestions**: Offers alternative times when preferred slots unavailable
+- **Business Hours Enforcement**: Monday-Friday 8AM-12PM, 1PM-6PM
+
+## Agent Descriptions
+
+### PatientIdentificationAgent
+- **Purpose**: Determines if caller is new or returning patient
+- **Key Question**: "Are you a new patient or have you visited our clinic before?"
+- **Transfers**: Routes to PatientLookupAgent or RegistrationAgent
+
+### PatientLookupAgent
+- **Purpose**: Verifies returning patients
+- **Required Info**: Phone number (1-XXX-XXX-XXXX) and date of birth (YYYY-MM-DD)
+- **Actions**: Searches patient database, welcomes back if found
+- **Fallback**: Offers new patient registration if not found
+
+### RegistrationAgent
+- **Purpose**: Registers new patients
+- **Collects**: Name, phone, date of birth, email (optional)
+- **Creates**: Patient record in database
+- **Next Steps**: Determines intent (information vs booking)
+
+### InfoAgent
+- **Purpose**: Provides treatment information and pricing
+- **Knowledge Base**: Access to complete treatment database
+- **Capabilities**: Treatment search, pricing information, procedure details
+- **Transfer**: Can route to booking if patient decides to schedule
+
+### EnhancedBookingAgent
+- **Purpose**: Schedules appointments for verified patients
+- **Features**: Calendar integration, availability checking, appointment creation
+- **Validation**: Ensures business hours compliance
+- **Database**: Links appointments to patient records
+
+## Treatment Database
+
+| Treatment | Price Range | Duration | Category |
+|-----------|-------------|----------|----------|
+| Basic Cleaning | $120-150 | 45 min | Preventive |
+| General Checkup | $80-100 | 30 min | Preventive |
+| Bitewing X-rays | $25-40 each | 5 min | Diagnostic |
+| Panoramic X-ray | $100-130 | 10 min | Diagnostic |
+| Composite Filling | $150-250 | 30 min | Restorative |
+| Amalgam Filling | $100-200 | 30 min | Restorative |
+| Root Canal | $800-1200 | 90 min | Endodontic |
+| Crown | $1000-1500 | 60 min | Restorative |
+| Teeth Whitening | $300-500 | 90 min | Cosmetic |
+| Tooth Extraction | $150-400 | 45 min | Surgical |
+| Deep Cleaning | $200-300 | 60 min | Periodontal |
+
+## Database Schema
+
+### Patients Table
+```sql
+patients (
+    patient_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    phone TEXT UNIQUE NOT NULL,  -- Format: 1-XXX-XXX-XXXX
+    date_of_birth DATE,
+    email TEXT,
+    emergency_contact TEXT,
+    registration_date TIMESTAMP,
+    last_visit TIMESTAMP,
+    status TEXT DEFAULT 'active'
+)
+```
+
+### Appointments Table
+```sql
+appointments (
+    appointment_id TEXT PRIMARY KEY,
+    patient_id TEXT NOT NULL,
+    appointment_date DATE NOT NULL,
+    appointment_time TIME NOT NULL,
+    treatment_type TEXT,
+    status TEXT DEFAULT 'scheduled',
+    notes TEXT,
+    estimated_cost_range TEXT,
+    created_at TIMESTAMP,
+    updated_at TIMESTAMP
+)
+```
+
+### Treatments Table
+```sql
+treatments (
+    treatment_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT,
+    price_range_min INTEGER,
+    price_range_max INTEGER,
+    duration_minutes INTEGER,
+    category TEXT
+)
+```
+
+## New Function Tools
+
+### Patient Management
+- `search_patient_by_phone_and_dob()`: Find existing patients
+- `create_patient_record()`: Register new patients
+- `update_date_of_birth()`: Collect DOB for verification
+- `update_email()`: Collect optional email
+
+### Knowledge Base
+- `get_treatment_info()`: Get treatment details by name/category
+- `search_treatments_by_keyword()`: Search treatments by keyword
+
+### Calendar Integration
+- `check_availability()`: Verify appointment slot availability
+- `suggest_alternative_times()`: Offer alternative appointment times
+
+## Installation & Setup
 
 ### Prerequisites
-- Python 3.10
-- Conda (Anaconda or Miniconda)
-- API keys for OpenAI, Deepgram, and LiveKit
-
-### Step 1: Create Conda Environment
-
 ```bash
-# Create a new conda environment with Python 3.10
-conda create -n alex-dental python=3.10 -y
-
-# Activate the environment
-conda activate alex-dental
-```
-
-### Step 2: Clone and Setup Project
-
-```bash
-# Navigate to your projects directory
-cd /path/to/your/projects
-
-# Clone or download the project files
-# Ensure you have the following files:
-# - alex_agent.py
-# - db_manager.py
-# - requirements.txt
-```
-
-### Step 3: Install Dependencies
-
-```bash
-# Install all required packages
 pip install -r requirements.txt
 ```
 
-The requirements include:
-- `python-dotenv` - Environment variable management
-- `livekit-agents[deepgram,openai,cartesia,silero,turn-detector]~=1.0` - LiveKit agents with plugins
-- `livekit-plugins-noise-cancellation~=0.2` - Noise cancellation
-- `aiosqlite` - Async SQLite database
-- `db-sqlite3` - SQLite database support
-- `pandas` - Data analysis
-- `matplotlib` - Plotting
-- `seaborn` - Statistical visualization
-- `pyyaml` - YAML configuration
+### Database Initialization
+The database will be automatically initialized with:
+- Patient management tables
+- Treatment knowledge base
+- Default treatment data
+- Proper indexes for performance
 
-### Step 4: Environment Configuration
+### Configuration
+1. Set up environment variables in `.env`
+2. Configure clinic hours in `calendar_service.py`
+3. Adjust treatment pricing in database initialization
 
-Create a `.env` file in your project directory:
+## Usage Examples
 
-```bash
-# Create environment file
-touch .env
-```
+### New Patient Flow
+1. **Greeter**: "Hello! Welcome to SmileRight Dental Clinic..."
+2. **PatientIdentification**: "Are you a new patient or have you visited us before?"
+3. **Registration**: "I'll need to collect some information. What's your full name?"
+4. **Intent Detection**: "How can I help you today? Are you looking for information about treatments or would you like to book an appointment?"
 
-Add the following environment variables to your `.env` file:
+### Returning Patient Flow
+1. **Greeter**: "Hello! Welcome to SmileRight Dental Clinic..."
+2. **PatientIdentification**: "Are you a new patient or have you visited us before?"
+3. **PatientLookup**: "I'll need your phone number and date of birth to find your record."
+4. **Verification**: "Welcome back, [Name]! How can I help you today?"
 
-```env
-# OpenAI Configuration
-OPENAI_API_KEY=your_openai_api_key_here
+### Treatment Information Flow
+1. **InfoAgent**: "I can help you with treatment information. What would you like to know about?"
+2. **Search**: "I found several treatments related to 'cleaning'..."
+3. **Details**: "Basic cleaning costs $120-150 and takes about 45 minutes..."
 
-# Deepgram Configuration  
-DEEPGRAM_API_KEY=your_deepgram_api_key_here
+## Privacy & Security
 
-# LiveKit Configuration
-LIVEKIT_URL=your_livekit_server_url
-LIVEKIT_API_KEY=your_livekit_api_key
-LIVEKIT_API_SECRET=your_livekit_api_secret
+### Patient Data Protection
+- **Minimal Data Collection**: Only essential information stored
+- **Secure Storage**: Encrypted database with proper access controls
+- **Data Retention**: Configurable retention policies
+- **Audit Trail**: Complete logging of all patient interactions
 
-# Optional: Database path (defaults to dental_assistant.db)
-DATABASE_PATH=dental_assistant.db
-```
+### Phone Number Format
+- **Standard Format**: 1-XXX-XXX-XXXX
+- **Validation**: Automatic format checking
+- **Normalization**: Consistent storage format
 
-### Step 5: API Key Setup
+## Performance Optimizations
 
-#### OpenAI API Key
-1. Visit [OpenAI Platform](https://platform.openai.com/)
-2. Create an account or sign in
-3. Navigate to API Keys section
-4. Create a new API key
-5. Add to your `.env` file
+### Database Optimizations
+- **Batch Processing**: Queued operations for better performance
+- **Indexes**: Optimized for common queries
+- **Connection Pooling**: Efficient database connections
+- **Background Processing**: Non-blocking operations
 
-#### Deepgram API Key
-1. Visit [Deepgram Console](https://console.deepgram.com/)
-2. Create an account or sign in
-3. Navigate to API Keys
-4. Create a new API key
-5. Add to your `.env` file
+### Memory Management
+- **In-Memory Metrics**: Fast access to session data
+- **Lightweight Logging**: Minimal overhead
+- **Efficient Caching**: Smart data caching strategies
 
-#### LiveKit Configuration
-1. Visit [LiveKit Cloud](https://cloud.livekit.io/) or set up your own LiveKit server
-2. Create a project
-3. Get your API key, secret, and server URL
-4. Add to your `.env` file
+## Monitoring & Analytics
 
-## 🎯 Usage
-
-### Basic Usage
-
-```bash
-# Activate the conda environment
-conda activate alex-dental
-
-# Run the dental assistant
-python alex_agent.py
-```
-
-### Advanced Usage
-
-#### Disable Database Recording
-```bash
-# Run without conversation/metrics logging
-python alex_agent.py --no-recording
-```
-
-#### Command Line Options
-- `--no-recording` or `--disable-recording`: Disable database logging for privacy or testing
-
-### Agent Workflow
-
-1. **Greeter Agent**: 
-   - Welcomes patients
-   - Provides clinic information
-   - Handles general inquiries
-   - Transfers to booking agent when needed
-
-2. **Booking Agent**:
-   - Collects customer name
-   - Requests phone number
-   - Schedules appointment date/time
-   - Records booking reason
-   - Validates against business hours
-   - Confirms reservation details
-
-## 🏗️ Architecture
-
-### Agent System
-```
-┌─────────────────┐    Transfer    ┌─────────────────┐
-│   Greeter       │ ──────────────▶│ Booking Agent   │
-│   Agent         │                │                 │
-│                 │                │ - Name          │
-│ - Welcome       │                │ - Phone         │
-│ - Clinic Info   │                │ - Date/Time     │
-│ - General Help  │                │ - Reason        │
-└─────────────────┘                └─────────────────┘
-```
-
-### Technology Stack
-```
-┌─────────────────────────────────────────────────────┐
-│                   Alex Assistant                    │
-├─────────────────────────────────────────────────────┤
-│ Speech-to-Text: Deepgram Nova-3                     │
-│ Language Model: OpenAI GPT-4o-mini                  │
-│ Text-to-Speech: OpenAI TTS                          │
-├─────────────────────────────────────────────────────┤
-│ Real-time Communication: LiveKit                    │
-│ Database: SQLite with async operations              │
-│ Voice Processing: Silero VAD + Noise Cancellation  │
-└─────────────────────────────────────────────────────┘
-```
-
-## 💾 Database Schema
-
-The assistant automatically creates and manages a SQLite database with the following tables:
-
-- **sessions**: Call session tracking
-- **user_data**: Customer information
-- **transcripts**: Full conversation logs
-- **metrics**: Performance and usage metrics
-- **agent_transfers**: Agent handoff tracking
-
-## 🔧 Configuration
-
-### Clinic Settings
-To customize for your clinic, modify the following in `alex_agent.py`:
-
-```python
-# Clinic information
-clinic_name = "SmileRight Dental Clinic"
-clinic_address = "5561 St-Denis Street, Montreal, Canada"
-clinic_hours = "Monday to Friday from 8:00 AM to 12:00 PM and 1:00 PM to 6:00 PM"
-```
-
-### Voice Settings
-Customize voice characteristics:
-
-```python
-# TTS voice options: alloy, echo, fable, onyx, nova, shimmer
-tts=openai.TTS(voice="ash")  # Change voice here
-```
-
-## 📊 Monitoring and Analytics
-
-### Real-time Metrics
+### Metrics Collected
+- Patient identification success rate
+- Treatment information requests
+- Appointment booking completion rate
+- Agent transfer patterns
 - Response times
-- Agent transfers
-- Booking completion rates
-- Session duration
-- Error tracking
 
-### Database Analytics
-Use the included analytics tools to analyze:
-- Customer interaction patterns
-- Peak booking times
-- Agent performance
-- Conversation quality
+### Logging
+- Patient interactions (with privacy controls)
+- Agent transfers and decisions
+- Error tracking and debugging
+- Performance metrics
 
-## 🛠️ Troubleshooting
+## Future Enhancements
+
+### Planned Features
+1. **Google Calendar Integration**: Real-time calendar sync
+2. **SMS Confirmations**: Automated appointment reminders
+3. **Insurance Verification**: Insurance coverage checking
+4. **Multi-language Support**: French and English support
+5. **Advanced Scheduling**: Recurring appointments, waitlists
+
+### Scalability Considerations
+- **Multi-clinic Support**: Support for multiple clinic locations
+- **Provider Scheduling**: Individual dentist calendars
+- **Advanced Reporting**: Business intelligence and analytics
+- **API Integration**: Third-party system integration
+
+## Troubleshooting
 
 ### Common Issues
+1. **Patient Not Found**: Verify phone number format and date of birth
+2. **Appointment Conflicts**: Check calendar service initialization
+3. **Database Errors**: Verify database permissions and connectivity
+4. **Agent Transfer Issues**: Check agent registration in entrypoint
 
-#### 1. Import Errors
-```bash
-# Ensure all dependencies are installed
-pip install -r requirements.txt
+### Debug Mode
+Enable detailed logging by setting `ENABLE_RECORDING = True` in the main file.
 
-# Check if conda environment is activated
-conda activate alex-dental
-```
+## Support
 
-#### 2. API Key Issues
-```bash
-# Verify .env file exists and contains valid keys
-cat .env
+For technical support or questions about the enhanced AI voice assistant:
+- Review the code documentation
+- Check the troubleshooting section
+- Examine the database logs for errors
+- Test individual components in isolation
 
-# Test API connectivity
-python -c "import openai; print('OpenAI key loaded')"
-```
+## License
 
-#### 3. Database Errors
-```bash
-# Check database permissions
-ls -la dental_assistant.db
-
-# Reset database (caution: deletes all data)
-rm dental_assistant.db
-python alex_agent.py  # Will recreate database
-```
-
-#### 4. Audio Issues
-- Ensure microphone permissions are granted
-- Check system audio settings
-- Verify LiveKit server connectivity
-
-### Performance Optimization
-
-#### For High-Volume Usage
-1. **Database Optimization**:
-   ```python
-   # Increase batch sizes in db_manager.py
-   db_manager = AsyncDatabaseManager(batch_size=200, flush_interval=1.0)
-   ```
-
-2. **Memory Management**:
-   ```python
-   # Reduce metrics sampling
-   metrics_collector = OptimizedMetricsCollector(sample_rate=0.05)
-   ```
-
-3. **Disable Recording for Testing**:
-   ```bash
-   python alex_agent.py --no-recording
-   ```
-
-## 🔒 Security and Privacy
-
-- All conversations can be optionally logged to local SQLite database
-- No data is sent to third parties beyond required API calls
-- Customer information is stored locally and encrypted in transit
-- Use `--no-recording` flag to disable all logging for maximum privacy
-
-## 📝 Development
-
-### Adding New Features
-
-1. **New Function Tools**: Add to the respective agent class
-2. **New Agents**: Extend `BaseAgent` class
-3. **Database Schema**: Modify `db_manager.py`
-4. **Custom Instructions**: Update agent initialization
-
-### Testing
-
-```bash
-# Run with recording disabled for testing
-python alex_agent.py --no-recording
-
-# Monitor logs
-tail -f dental_assistant.log
-```
-
-## 📄 License
-
-This project is provided as-is for educational and commercial use. Please ensure compliance with your local healthcare and privacy regulations when deploying in production.
-
-## 🤝 Support
-
-For technical support or customization requests:
-1. Check the troubleshooting section above
-2. Review the LiveKit documentation
-3. Verify API key configurations
-4. Check system requirements and dependencies
-
----
-
-**Built with ❤️ for modern dental practices**
+This enhanced AI voice assistant is proprietary software for SmileRight Dental Clinic.
