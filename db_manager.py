@@ -115,13 +115,82 @@ class AsyncDatabaseManager:
                 )
             """)
             
+            # Patients table (minimal info for privacy)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS patients (
+                    patient_id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    phone TEXT UNIQUE NOT NULL,
+                    date_of_birth DATE,
+                    email TEXT,
+                    emergency_contact TEXT,
+                    registration_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    last_visit TIMESTAMP,
+                    status TEXT DEFAULT 'active'
+                )
+            """)
+            
+            # Appointments table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS appointments (
+                    appointment_id TEXT PRIMARY KEY,
+                    patient_id TEXT NOT NULL,
+                    appointment_date DATE NOT NULL,
+                    appointment_time TIME NOT NULL,
+                    treatment_type TEXT,
+                    status TEXT DEFAULT 'scheduled',
+                    notes TEXT,
+                    estimated_cost_range TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (patient_id) REFERENCES patients (patient_id)
+                )
+            """)
+            
+            # Treatment pricing knowledge base
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS treatments (
+                    treatment_id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    description TEXT,
+                    price_range_min INTEGER,
+                    price_range_max INTEGER,
+                    duration_minutes INTEGER,
+                    category TEXT
+                )
+            """)
+            
             # Create indexes for better performance
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_transcripts_session ON transcripts(session_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_metrics_session ON metrics(session_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_data_session ON user_data(session_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_patients_phone ON patients(phone)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_appointments_patient ON appointments(patient_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_appointments_date ON appointments(appointment_date)")
+            
+            # Insert default treatment data
+            treatments_data = [
+                ('basic_cleaning', 'Basic Cleaning', 'Regular dental cleaning and polishing', 120, 150, 45, 'preventive'),
+                ('general_checkup', 'General Checkup', 'Comprehensive oral examination', 80, 100, 30, 'preventive'),
+                ('bitewing_xray', 'Bitewing X-rays', 'X-rays to check for cavities between teeth', 25, 40, 5, 'diagnostic'),
+                ('panoramic_xray', 'Panoramic X-ray', 'Full mouth X-ray for comprehensive view', 100, 130, 10, 'diagnostic'),
+                ('composite_filling', 'Composite Filling', 'Tooth-colored filling material', 150, 250, 30, 'restorative'),
+                ('amalgam_filling', 'Amalgam Filling', 'Silver filling material', 100, 200, 30, 'restorative'),
+                ('root_canal', 'Root Canal', 'Treatment for infected tooth pulp', 800, 1200, 90, 'endodontic'),
+                ('crown', 'Crown', 'Cap to restore damaged tooth', 1000, 1500, 60, 'restorative'),
+                ('teeth_whitening', 'Teeth Whitening', 'Professional teeth whitening treatment', 300, 500, 90, 'cosmetic'),
+                ('extraction', 'Tooth Extraction', 'Removal of damaged or problematic tooth', 150, 400, 45, 'surgical'),
+                ('deep_cleaning', 'Deep Cleaning (per quadrant)', 'Scaling and root planing for gum disease', 200, 300, 60, 'periodontal')
+            ]
+            
+            cursor.executemany("""
+                INSERT OR IGNORE INTO treatments 
+                (treatment_id, name, description, price_range_min, price_range_max, duration_minutes, category)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, treatments_data)
             
             conn.commit()
-            logger.info("Database initialized successfully with optimizations")
+            logger.info("Database initialized successfully with optimizations and patient management")
     
     async def start_background_processing(self):
         """Start background batch processing"""
@@ -366,6 +435,116 @@ class AsyncDatabaseManager:
                 'metrics': [dict(m) for m in metrics],
                 'agent_transfers': [dict(t) for t in transfers]
             }
+    
+    # Patient Management Methods
+    async def search_patient_by_phone_and_dob(self, phone: str, date_of_birth: str) -> Optional[Dict[str, Any]]:
+        """Search for patient by phone number and date of birth"""
+        async with self.get_connection() as conn:
+            cursor = await conn.execute("""
+                SELECT * FROM patients 
+                WHERE phone = ? AND date_of_birth = ? AND status = 'active'
+            """, (phone, date_of_birth))
+            patient = await cursor.fetchone()
+            
+            if patient:
+                # Update last visit timestamp
+                await conn.execute("""
+                    UPDATE patients SET last_visit = ? WHERE patient_id = ?
+                """, (datetime.now(), patient['patient_id']))
+                await conn.commit()
+                
+                return dict(patient)
+            return None
+    
+    async def create_patient_record(self, name: str, phone: str, date_of_birth: str, 
+                                  email: str = None, emergency_contact: str = None) -> str:
+        """Create a new patient record and return patient ID"""
+        patient_id = str(uuid.uuid4())
+        
+        async with self.get_connection() as conn:
+            await conn.execute("""
+                INSERT INTO patients 
+                (patient_id, name, phone, date_of_birth, email, emergency_contact, registration_date, last_visit)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (patient_id, name, phone, date_of_birth, email, emergency_contact, 
+                  datetime.now(), datetime.now()))
+            await conn.commit()
+        
+        logger.info(f"Created patient record: {patient_id} for {name}")
+        return patient_id
+    
+    async def get_patient_appointment_history(self, patient_id: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """Get patient's appointment history"""
+        async with self.get_connection() as conn:
+            cursor = await conn.execute("""
+                SELECT * FROM appointments 
+                WHERE patient_id = ? 
+                ORDER BY appointment_date DESC, appointment_time DESC
+                LIMIT ?
+            """, (patient_id, limit))
+            appointments = await cursor.fetchall()
+            
+            return [dict(apt) for apt in appointments]
+    
+    async def create_appointment(self, patient_id: str, appointment_date: str, 
+                               appointment_time: str, treatment_type: str = None,
+                               notes: str = None, estimated_cost_range: str = None) -> str:
+        """Create a new appointment and return appointment ID"""
+        appointment_id = str(uuid.uuid4())
+        
+        async with self.get_connection() as conn:
+            await conn.execute("""
+                INSERT INTO appointments 
+                (appointment_id, patient_id, appointment_date, appointment_time, 
+                 treatment_type, notes, estimated_cost_range)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (appointment_id, patient_id, appointment_date, appointment_time,
+                  treatment_type, notes, estimated_cost_range))
+            await conn.commit()
+        
+        logger.info(f"Created appointment: {appointment_id} for patient {patient_id}")
+        return appointment_id
+    
+    # Treatment Knowledge Base Methods
+    async def get_treatment_info(self, treatment_name: str = None, category: str = None) -> List[Dict[str, Any]]:
+        """Get treatment information by name or category"""
+        async with self.get_connection() as conn:
+            if treatment_name:
+                cursor = await conn.execute("""
+                    SELECT * FROM treatments 
+                    WHERE name LIKE ? OR treatment_id LIKE ?
+                """, (f"%{treatment_name}%", f"%{treatment_name}%"))
+            elif category:
+                cursor = await conn.execute("""
+                    SELECT * FROM treatments WHERE category = ?
+                """, (category,))
+            else:
+                cursor = await conn.execute("SELECT * FROM treatments ORDER BY category, name")
+            
+            treatments = await cursor.fetchall()
+            return [dict(t) for t in treatments]
+    
+    async def get_treatment_pricing(self, treatment_id: str) -> Optional[Dict[str, Any]]:
+        """Get specific treatment pricing information"""
+        async with self.get_connection() as conn:
+            cursor = await conn.execute("""
+                SELECT * FROM treatments WHERE treatment_id = ?
+            """, (treatment_id,))
+            treatment = await cursor.fetchone()
+            
+            return dict(treatment) if treatment else None
+    
+    async def search_treatments_by_keyword(self, keyword: str) -> List[Dict[str, Any]]:
+        """Search treatments by keyword in name or description"""
+        async with self.get_connection() as conn:
+            cursor = await conn.execute("""
+                SELECT * FROM treatments 
+                WHERE name LIKE ? OR description LIKE ?
+                ORDER BY name
+            """, (f"%{keyword}%", f"%{keyword}%"))
+            treatments = await cursor.fetchall()
+            
+            return [dict(t) for t in treatments]
 
 
 class OptimizedMetricsCollector:

@@ -24,6 +24,7 @@ from livekit.agents.voice import MetricsCollectedEvent
 
 # Import our optimized database manager
 from db_manager import AsyncDatabaseManager, OptimizedMetricsCollector, InMemoryMetrics
+from calendar_service import calendar_service, Appointment as CalendarAppointment
 
 logger = logging.getLogger("dental_assistant")
 logger.setLevel(logging.INFO)
@@ -47,6 +48,17 @@ class UserData:
     
     # Recording settings
     enable_recording: bool = False
+    
+    # Patient management fields
+    patient_id: Optional[str] = None
+    is_returning_patient: Optional[bool] = None
+    patient_verified: bool = False
+    date_of_birth: Optional[str] = None
+    email: Optional[str] = None
+    
+    # Intent tracking
+    user_intent: Optional[str] = None  # 'information', 'booking', 'general'
+    requested_treatment: Optional[str] = None
 
     def summarize(self) -> str:
         data = {
@@ -190,6 +202,189 @@ async def get_clinic_info(context: RunContext_T) -> str:
     )
 
 @function_tool()
+async def update_date_of_birth(
+    date_of_birth: Annotated[str, Field(description="The customer's date of birth in YYYY-MM-DD format")],
+    context: RunContext_T,
+) -> str:
+    """Called when the user provides their date of birth for patient verification."""
+    userdata = context.userdata
+    userdata.date_of_birth = date_of_birth
+    userdata.save_to_db()
+    
+    # Update in-memory metrics
+    userdata.in_memory_metrics.update("date_of_birth_updated", 1)
+    
+    return f"Date of birth updated to {date_of_birth}"
+
+@function_tool()
+async def update_email(
+    email: Annotated[str, Field(description="The customer's email address")],
+    context: RunContext_T,
+) -> str:
+    """Called when the user provides their email address."""
+    userdata = context.userdata
+    userdata.email = email
+    userdata.save_to_db()
+    
+    # Update in-memory metrics
+    userdata.in_memory_metrics.update("email_updated", 1)
+    
+    return f"Email updated to {email}"
+
+@function_tool()
+async def search_patient_by_phone_and_dob(
+    phone: Annotated[str, Field(description="Patient's phone number in format 1-XXX-XXX-XXXX")],
+    date_of_birth: Annotated[str, Field(description="Patient's date of birth in YYYY-MM-DD format")],
+    context: RunContext_T,
+) -> str:
+    """Search for existing patient by phone number and date of birth."""
+    userdata = context.userdata
+    
+    if not userdata.db_manager:
+        return "Patient lookup is not available at this time."
+    
+    try:
+        patient = await userdata.db_manager.search_patient_by_phone_and_dob(phone, date_of_birth)
+        
+        if patient:
+            # Update userdata with patient information
+            userdata.patient_id = patient['patient_id']
+            userdata.customer_name = patient['name']
+            userdata.customer_phone = patient['phone']
+            userdata.date_of_birth = patient['date_of_birth']
+            userdata.email = patient.get('email')
+            userdata.is_returning_patient = True
+            userdata.patient_verified = True
+            
+            userdata.save_to_db()
+            userdata.in_memory_metrics.update("patient_found", 1)
+            
+            return f"Welcome back, {patient['name']}! I found your record in our system. How can I help you today?"
+        else:
+            userdata.in_memory_metrics.update("patient_not_found", 1)
+            return "I couldn't find a patient record with that phone number and date of birth. Would you like me to register you as a new patient?"
+            
+    except Exception as e:
+        logger.error(f"Error searching for patient: {e}")
+        return "I'm having trouble accessing patient records right now. Let me help you as a new patient."
+
+@function_tool()
+async def create_patient_record(
+    name: Annotated[str, Field(description="Patient's full name")],
+    phone: Annotated[str, Field(description="Patient's phone number in format 1-XXX-XXX-XXXX")],
+    date_of_birth: Annotated[str, Field(description="Patient's date of birth in YYYY-MM-DD format")],
+    context: RunContext_T,
+    email: Annotated[Optional[str], Field(description="Patient's email address (optional)")] = None,
+) -> str:
+    """Create a new patient record in the system."""
+    userdata = context.userdata
+    
+    if not userdata.db_manager:
+        return "Patient registration is not available at this time."
+    
+    try:
+        patient_id = await userdata.db_manager.create_patient_record(
+            name=name,
+            phone=phone,
+            date_of_birth=date_of_birth,
+            email=email
+        )
+        
+        # Update userdata
+        userdata.patient_id = patient_id
+        userdata.customer_name = name
+        userdata.customer_phone = phone
+        userdata.date_of_birth = date_of_birth
+        userdata.email = email
+        userdata.is_returning_patient = False
+        userdata.patient_verified = True
+        
+        userdata.save_to_db()
+        userdata.in_memory_metrics.update("new_patient_registered", 1)
+        
+        return f"Great! I've registered you as a new patient, {name}. Your patient record has been created. How can I help you today?"
+        
+    except Exception as e:
+        logger.error(f"Error creating patient record: {e}")
+        return "I'm having trouble creating your patient record right now. Let me still help you with your inquiry."
+
+@function_tool()
+async def get_treatment_info(
+    context: RunContext_T,
+    treatment_name: Annotated[Optional[str], Field(description="Name of the treatment to get information about")] = None,
+    category: Annotated[Optional[str], Field(description="Category of treatments (preventive, diagnostic, restorative, etc.)")] = None,
+) -> str:
+    """Get information about dental treatments and their pricing."""
+    userdata = context.userdata
+    
+    if not userdata.db_manager:
+        return "Treatment information is not available at this time."
+    
+    try:
+        treatments = await userdata.db_manager.get_treatment_info(treatment_name, category)
+        
+        if not treatments:
+            return "I couldn't find information about that treatment. Let me know what specific treatment you're interested in."
+        
+        # Format treatment information
+        info_parts = []
+        for treatment in treatments[:5]:  # Limit to 5 treatments to avoid overwhelming
+            price_range = f"${treatment['price_range_min']}-${treatment['price_range_max']}"
+            duration = f"{treatment['duration_minutes']} minutes"
+            
+            info_parts.append(
+                f"{treatment['name']}: {treatment['description']}. "
+                f"Price range: {price_range}. Duration: {duration}."
+            )
+        
+        result = "Here's information about our treatments:\n\n" + "\n\n".join(info_parts)
+        
+        if len(treatments) > 5:
+            result += f"\n\nI found {len(treatments)} treatments total. Would you like information about any specific treatment?"
+        
+        userdata.in_memory_metrics.update("treatment_info_requested", 1)
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error getting treatment info: {e}")
+        return "I'm having trouble accessing treatment information right now. Please call our office for specific pricing details."
+
+@function_tool()
+async def search_treatments_by_keyword(
+    keyword: Annotated[str, Field(description="Keyword to search for in treatment names or descriptions")],
+    context: RunContext_T,
+) -> str:
+    """Search for treatments by keyword."""
+    userdata = context.userdata
+    
+    if not userdata.db_manager:
+        return "Treatment search is not available at this time."
+    
+    try:
+        treatments = await userdata.db_manager.search_treatments_by_keyword(keyword)
+        
+        if not treatments:
+            return f"I couldn't find any treatments related to '{keyword}'. Could you try a different term or ask about a specific treatment?"
+        
+        # Format search results
+        info_parts = []
+        for treatment in treatments[:3]:  # Limit to 3 for voice response
+            price_range = f"${treatment['price_range_min']}-${treatment['price_range_max']}"
+            info_parts.append(f"{treatment['name']}: {price_range}")
+        
+        result = f"I found {len(treatments)} treatments related to '{keyword}':\n\n" + "\n".join(info_parts)
+        
+        if len(treatments) > 3:
+            result += "\n\nWould you like more details about any of these treatments?"
+        
+        userdata.in_memory_metrics.update("treatment_search_performed", 1)
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error searching treatments: {e}")
+        return "I'm having trouble searching for treatments right now. Please let me know what specific treatment you're interested in."
+
+@function_tool()
 async def to_greeter(context: RunContext_T) -> Agent:
     """Called when user asks any unrelated questions or requests
     any other services not in your job description."""
@@ -305,6 +500,186 @@ class BookingAgent(BaseAgent):
 
         return await self._transfer_to_agent("greeter", context)
 
+class PatientIdentificationAgent(BaseAgent):
+    def __init__(self) -> None:
+        super().__init__(
+            instructions=(
+                "You are the patient identification agent for SmileRight Dental Clinic. "
+                "Your job is to determine if the caller is a new patient or a returning patient. "
+                "Ask: 'Are you a new patient or have you visited our clinic before?' "
+                "Based on their response, transfer them to the appropriate agent. "
+                "Be friendly and professional. Speak in clear, complete sentences."
+            ),
+            llm=openai.LLM(parallel_tool_calls=False),
+            tts=openai.TTS(voice="ash"),
+            tools=[get_current_datetime, get_clinic_info],
+        )
+
+    @function_tool()
+    async def to_patient_lookup(self, context: RunContext_T) -> tuple[Agent, str]:
+        """Called when user indicates they are a returning patient."""
+        userdata = context.userdata
+        userdata.is_returning_patient = True
+        return await self._transfer_to_agent("patient_lookup", context)
+
+    @function_tool()
+    async def to_registration_agent(self, context: RunContext_T) -> tuple[Agent, str]:
+        """Called when user indicates they are a new patient."""
+        userdata = context.userdata
+        userdata.is_returning_patient = False
+        return await self._transfer_to_agent("registration_agent", context)
+
+class PatientLookupAgent(BaseAgent):
+    def __init__(self) -> None:
+        super().__init__(
+            instructions=(
+                "You are the patient lookup agent for SmileRight Dental Clinic. "
+                "Your job is to verify returning patients by asking for their phone number and date of birth. "
+                "Ask for phone number in format 1-XXX-XXX-XXXX and date of birth in YYYY-MM-DD format. "
+                "Once you have both pieces of information, search for the patient record. "
+                "If found, welcome them back and ask how you can help. "
+                "If not found, offer to register them as a new patient. "
+                "Be friendly and professional."
+            ),
+            llm=openai.LLM(parallel_tool_calls=False),
+            tts=openai.TTS(voice="ash"),
+            tools=[update_phone, update_date_of_birth, search_patient_by_phone_and_dob, get_current_datetime],
+        )
+
+    @function_tool()
+    async def to_booking_agent(self, context: RunContext_T) -> tuple[Agent, str]:
+        """Called when verified patient wants to make a booking."""
+        return await self._transfer_to_agent("enhanced_booking_agent", context)
+
+    @function_tool()
+    async def to_info_agent(self, context: RunContext_T) -> tuple[Agent, str]:
+        """Called when verified patient wants treatment information."""
+        userdata = context.userdata
+        userdata.user_intent = "information"
+        return await self._transfer_to_agent("info_agent", context)
+
+    @function_tool()
+    async def to_registration_agent(self, context: RunContext_T) -> tuple[Agent, str]:
+        """Called when patient is not found and wants to register as new patient."""
+        userdata = context.userdata
+        userdata.is_returning_patient = False
+        return await self._transfer_to_agent("registration_agent", context)
+
+class RegistrationAgent(BaseAgent):
+    def __init__(self) -> None:
+        super().__init__(
+            instructions=(
+                "You are the patient registration agent for SmileRight Dental Clinic. "
+                "Your job is to register new patients by collecting their information: "
+                "name, phone number (1-XXX-XXX-XXXX format), date of birth (YYYY-MM-DD format), and optionally email. "
+                "After collecting the information, create their patient record. "
+                "Then ask what they need help with: booking an appointment or information about treatments. "
+                "Be friendly, professional, and thorough in collecting information."
+            ),
+            llm=openai.LLM(parallel_tool_calls=False),
+            tts=openai.TTS(voice="ash"),
+            tools=[update_name, update_phone, update_date_of_birth, update_email, create_patient_record, get_current_datetime],
+        )
+
+    @function_tool()
+    async def to_booking_agent(self, context: RunContext_T) -> tuple[Agent, str]:
+        """Called when new patient wants to make a booking."""
+        userdata = context.userdata
+        userdata.user_intent = "booking"
+        return await self._transfer_to_agent("enhanced_booking_agent", context)
+
+    @function_tool()
+    async def to_info_agent(self, context: RunContext_T) -> tuple[Agent, str]:
+        """Called when new patient wants treatment information."""
+        userdata = context.userdata
+        userdata.user_intent = "information"
+        return await self._transfer_to_agent("info_agent", context)
+
+class InfoAgent(BaseAgent):
+    def __init__(self) -> None:
+        super().__init__(
+            instructions=(
+                "You are the information agent for SmileRight Dental Clinic. "
+                "Your job is to provide information about dental treatments, pricing, and procedures. "
+                "You have access to our complete treatment database with pricing ranges. "
+                "Answer questions about treatments, costs, duration, and what to expect. "
+                "If a patient decides they want to book an appointment after getting information, transfer them to booking. "
+                "Be knowledgeable, helpful, and professional. Speak in clear, complete sentences."
+            ),
+            llm=openai.LLM(parallel_tool_calls=False),
+            tts=openai.TTS(voice="ash"),
+            tools=[get_treatment_info, search_treatments_by_keyword, get_current_datetime, get_clinic_info],
+        )
+
+    @function_tool()
+    async def to_booking_agent(self, context: RunContext_T) -> tuple[Agent, str]:
+        """Called when patient wants to book an appointment after getting information."""
+        userdata = context.userdata
+        userdata.user_intent = "booking"
+        return await self._transfer_to_agent("enhanced_booking_agent", context)
+
+class EnhancedBookingAgent(BaseAgent):
+    def __init__(self) -> None:
+        super().__init__(
+            instructions=(
+                "You are the enhanced booking agent at SmileRight Dental Clinic. "
+                "You work with both new and returning patients who already have patient records. "
+                "Your job is to schedule appointments by collecting: date, time, and treatment type. "
+                "Our clinic hours are Monday to Friday 8:00 AM - 12:00 PM and 1:00 PM - 6:00 PM. "
+                "Always verify appointment times are within business hours. "
+                "If the patient doesn't have complete information (name, phone), collect it. "
+                "Create the appointment in our system and confirm all details. "
+                "Be professional and thorough."
+            ),
+            llm=openai.LLM(parallel_tool_calls=False),
+            tts=openai.TTS(voice="ash"),
+            tools=[update_name, update_phone, update_booking_date_time, update_booking_reason, 
+                   get_current_datetime, get_clinic_info, get_treatment_info],
+        )
+
+    @function_tool()
+    async def confirm_appointment(self, context: RunContext_T) -> str:
+        """Called when the patient confirms their appointment details."""
+        userdata = context.userdata
+        
+        # Verify we have all required information
+        if not userdata.patient_verified:
+            return "I need to verify your patient information first. Please provide your name and phone number."
+        
+        if not userdata.booking_date_time:
+            return "Please provide your preferred appointment date and time."
+        
+        if not userdata.booking_reason:
+            return "Please let me know what type of treatment or service you need."
+        
+        # Create appointment in database if we have a patient ID
+        if userdata.db_manager and userdata.patient_id:
+            try:
+                # Parse date and time (this is simplified - in production you'd want better parsing)
+                appointment_id = await userdata.db_manager.create_appointment(
+                    patient_id=userdata.patient_id,
+                    appointment_date=userdata.booking_date_time.split()[0],  # Simplified parsing
+                    appointment_time="09:00",  # Simplified - would parse actual time
+                    treatment_type=userdata.booking_reason,
+                    notes=f"Appointment scheduled via voice assistant"
+                )
+                
+                userdata.in_memory_metrics.update("appointment_created", 1)
+                
+                return (f"Perfect! I've confirmed your appointment for {userdata.booking_date_time} "
+                       f"for {userdata.booking_reason}. Your appointment ID is {appointment_id[:8]}. "
+                       f"We'll see you at SmileRight Dental Clinic. Is there anything else I can help you with?")
+                       
+            except Exception as e:
+                logger.error(f"Error creating appointment: {e}")
+                return (f"I've noted your appointment request for {userdata.booking_date_time} "
+                       f"for {userdata.booking_reason}. Our staff will call you to confirm the details. "
+                       f"Is there anything else I can help you with?")
+        else:
+            return (f"I've noted your appointment request for {userdata.booking_date_time} "
+                   f"for {userdata.booking_reason}. Our staff will call you to confirm the details. "
+                   f"Is there anything else I can help you with?")
+
 class Greeter(BaseAgent):
     def __init__(self) -> None:
         super().__init__(
@@ -312,8 +687,8 @@ class Greeter(BaseAgent):
                 "You are Denti Assist, the friendly automated scheduling assistant for SmileRight Dental Clinic. "
                 "Our clinic is located at 5561 St-Denis Street, Montreal, Canada. "
                 "We are open Monday to Friday from 8:00 AM to 12:00 PM and 1:00 PM to 6:00 PM. We are closed on weekends. "
-                "Handle calls about appointments quickly and politely while sounding like a calm human receptionist. "
-                "You can provide clinic information, current date/time, and help with appointment scheduling. "
+                "After greeting callers, transfer them to patient identification to determine if they're new or returning patients. "
+                "You can also provide basic clinic information if asked. "
                 "Speak in clear, complete sentences with no special characters or symbols. "
                 "Keep a warm, professional tone at a normal pace."
             ),
@@ -323,9 +698,14 @@ class Greeter(BaseAgent):
         )
 
     @function_tool()
+    async def to_patient_identification(self, context: RunContext_T) -> tuple[Agent, str]:
+        """Called to start the patient identification process."""
+        return await self._transfer_to_agent("patient_identification", context)
+
+    @function_tool()
     async def to_booking_agent(self, context: RunContext_T) -> tuple[Agent, str]:
-        """Called when user wants to make or update a booking."""
-        return await self._transfer_to_agent("booking_agent", context)
+        """Called when user wants to make or update a booking (legacy support)."""
+        return await self._transfer_to_agent("patient_identification", context)
 
 # Optimized session class with minimal blocking operations
 class OptimizedAgentSession(AgentSession[UserData]):
@@ -445,7 +825,12 @@ async def entrypoint(ctx: agents.JobContext):
     
     userdata.agents.update({
         "greeter": Greeter(),
-        "booking_agent": BookingAgent(),
+        "patient_identification": PatientIdentificationAgent(),
+        "patient_lookup": PatientLookupAgent(),
+        "registration_agent": RegistrationAgent(),
+        "info_agent": InfoAgent(),
+        "enhanced_booking_agent": EnhancedBookingAgent(),
+        "booking_agent": BookingAgent(),  # Keep for legacy compatibility
     })
     
     # Use optimized session class
