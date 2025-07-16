@@ -1,0 +1,8 @@
+.env
+.env.cloud
+.env.local
+dental_assistant.db
+keys.txt
+**.log
+**.pyc
+__pycache__

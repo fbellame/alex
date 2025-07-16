@@ -1,0 +1,9 @@
+python-dotenv
+livekit-agents[deepgram,openai,cartesia,silero,turn-detector]~=1.0
+livekit-plugins-noise-cancellation~=0.2
+aiosqlite
+db-sqlite3 
+pandas 
+matplotlib 
+seaborn 
+pyyaml
