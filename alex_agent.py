@@ -385,6 +385,76 @@ async def search_treatments_by_keyword(
         return "I'm having trouble searching for treatments right now. Please let me know what specific treatment you're interested in."
 
 @function_tool()
+async def get_treatment_price_and_duration(
+    treatment_name: Annotated[str, Field(description="Name of the treatment to get price and duration for")],
+    context: RunContext_T,
+) -> str:
+    """Get specific price and duration information for a dental treatment.
+    This function provides concise, voice-friendly responses about treatment costs and time requirements."""
+    userdata = context.userdata
+    
+    if not userdata.db_manager:
+        return "Treatment pricing information is not available at this time."
+    
+    try:
+        treatment = await userdata.db_manager.get_treatment_price_duration(treatment_name)
+        
+        if not treatment:
+            return f"I couldn't find pricing information for '{treatment_name}'. Could you try a different treatment name or ask me to search for treatments?"
+        
+        # Store the requested treatment for booking context
+        userdata.requested_treatment = treatment['name']
+        userdata.save_to_db()
+        
+        # Format price range in a voice-friendly way
+        min_price = treatment['price_range_min']
+        max_price = treatment['price_range_max']
+        duration = treatment['duration_minutes']
+        
+        # Convert duration to user-friendly format
+        if duration >= 60:
+            hours = duration // 60
+            minutes = duration % 60
+            if minutes == 0:
+                duration_text = f"{hours} hour{'s' if hours > 1 else ''}"
+            else:
+                duration_text = f"{hours} hour{'s' if hours > 1 else ''} and {minutes} minutes"
+        else:
+            duration_text = f"{duration} minutes"
+        
+        # Create natural speech response
+        if min_price == max_price:
+            price_text = f"{min_price} dollars"
+        else:
+            price_text = f"between {min_price} and {max_price} dollars"
+        
+        result = (f"For {treatment['name']}, the cost is {price_text} "
+                 f"and the appointment typically takes {duration_text}.")
+        
+        # Add brief description if available
+        if treatment.get('description'):
+            result += f" This treatment involves {treatment['description'].lower()}."
+        
+        # Track metrics
+        userdata.in_memory_metrics.update("treatment_price_duration_requested", 1)
+        
+        # Log the query
+        if userdata.enable_recording and userdata.db_manager and userdata.session_id:
+            userdata.db_manager.queue_transcript(
+                userdata.session_id,
+                context.session.current_agent.__class__.__name__,
+                "function_call",
+                f"Price/duration query for: {treatment_name}",
+                metadata={"function": "get_treatment_price_and_duration", "treatment": treatment['name']}
+            )
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error getting treatment price and duration: {e}")
+        return "I'm having trouble accessing treatment pricing right now. Please call our office at your convenience for specific pricing details."
+
+@function_tool()
 async def to_greeter(context: RunContext_T) -> Agent:
     """Called when user asks any unrelated questions or requests
     any other services not in your job description."""
@@ -433,6 +503,14 @@ class BaseAgent(Agent):
                    f"Clinic hours: Monday to Friday 8:00 AM - 12:00 PM and 1:00 PM - 6:00 PM. "
                    f"Current user data is {userdata.summarize()}",
         )
+        
+        # For Greeter agent, initiate conversation immediately
+        if agent_name == "Greeter":
+            chat_ctx.add_message(
+                role="user",
+                content="[System: User has connected to the call]"
+            )
+        
         await self.update_chat_ctx(chat_ctx)
         self.session.generate_reply(tool_choice="none")
 
@@ -455,7 +533,8 @@ class BaseAgent(Agent):
                 f"Transfer from {current_agent.__class__.__name__} to {name}"
             ))
 
-        return next_agent, f"Transferring to {name}."
+        # Silent transfer - no message to user
+        return next_agent, ""
 
 class BookingAgent(BaseAgent):
     def __init__(self) -> None:
@@ -601,14 +680,16 @@ class InfoAgent(BaseAgent):
             instructions=(
                 "You are the information agent for SmileRight Dental Clinic. "
                 "Your job is to provide information about dental treatments, pricing, and procedures. "
-                "You have access to our complete treatment database with pricing ranges. "
+                "You have access to our complete treatment database with pricing ranges and duration information. "
+                "When customers ask specifically about treatment prices or how long treatments take, use the get_treatment_price_and_duration function for the most accurate and voice-friendly response. "
+                "For general treatment information or searches, use the other available tools. "
                 "Answer questions about treatments, costs, duration, and what to expect. "
                 "If a patient decides they want to book an appointment after getting information, transfer them to booking. "
                 "Be knowledgeable, helpful, and professional. Speak in clear, complete sentences."
             ),
             llm=openai.LLM(parallel_tool_calls=False),
             tts=openai.TTS(voice="ash"),
-            tools=[get_treatment_info, search_treatments_by_keyword, get_current_datetime, get_clinic_info],
+            tools=[get_treatment_info, search_treatments_by_keyword, get_treatment_price_and_duration, get_current_datetime, get_clinic_info],
         )
 
     @function_tool()
@@ -627,6 +708,7 @@ class EnhancedBookingAgent(BaseAgent):
                 "Your job is to schedule appointments by collecting: date, time, and treatment type. "
                 "Our clinic hours are Monday to Friday 8:00 AM - 12:00 PM and 1:00 PM - 6:00 PM. "
                 "Always verify appointment times are within business hours. "
+                "If the patient asks about treatment pricing or duration during booking, use get_treatment_price_and_duration for accurate information. "
                 "If the patient doesn't have complete information (name, phone), collect it. "
                 "Create the appointment in our system and confirm all details. "
                 "Be professional and thorough."
@@ -634,7 +716,7 @@ class EnhancedBookingAgent(BaseAgent):
             llm=openai.LLM(parallel_tool_calls=False),
             tts=openai.TTS(voice="ash"),
             tools=[update_name, update_phone, update_booking_date_time, update_booking_reason, 
-                   get_current_datetime, get_clinic_info, get_treatment_info],
+                   get_current_datetime, get_clinic_info, get_treatment_info, get_treatment_price_and_duration],
         )
 
     @function_tool()
@@ -687,24 +769,28 @@ class Greeter(BaseAgent):
                 "You are Denti Assist, the friendly automated scheduling assistant for SmileRight Dental Clinic. "
                 "Our clinic is located at 5561 St-Denis Street, Montreal, Canada. "
                 "We are open Monday to Friday from 8:00 AM to 12:00 PM and 1:00 PM to 6:00 PM. We are closed on weekends. "
-                "After greeting callers, transfer them to patient identification to determine if they're new or returning patients. "
-                "You can also provide basic clinic information if asked. "
+                "IMMEDIATELY when someone connects, greet them warmly and ask how you can help them today. "
+                "If they ask about treatment information, pricing, or procedures, provide the information directly using available tools. "
+                "You do NOT need patient registration or identification to provide basic treatment information and pricing. "
+                "Only transfer to patient identification if they specifically want to book an appointment. "
+                "For general treatment information and pricing, help them directly without any transfers. "
                 "Speak in clear, complete sentences with no special characters or symbols. "
-                "Keep a warm, professional tone at a normal pace."
+                "Keep a warm, professional tone at a normal pace. "
+                "Start every conversation with a greeting like: 'Hello! Thank you for calling SmileRight Dental Clinic. This is Denti Assist, your automated scheduling assistant. How can I help you today?'"
             ),
             llm=openai.LLM(parallel_tool_calls=False),
             tts=openai.TTS(voice="ash"),
-            tools=[get_current_datetime, get_clinic_info],
+            tools=[get_current_datetime, get_clinic_info, get_treatment_info, search_treatments_by_keyword, get_treatment_price_and_duration],
         )
 
     @function_tool()
     async def to_patient_identification(self, context: RunContext_T) -> tuple[Agent, str]:
-        """Called to start the patient identification process."""
+        """Called only when user specifically wants to book an appointment."""
         return await self._transfer_to_agent("patient_identification", context)
 
     @function_tool()
     async def to_booking_agent(self, context: RunContext_T) -> tuple[Agent, str]:
-        """Called when user wants to make or update a booking (legacy support)."""
+        """Called when user wants to make or update a booking."""
         return await self._transfer_to_agent("patient_identification", context)
 
 # Optimized session class with minimal blocking operations

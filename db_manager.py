@@ -545,6 +545,60 @@ class AsyncDatabaseManager:
             treatments = await cursor.fetchall()
             
             return [dict(t) for t in treatments]
+    
+    async def get_treatment_price_duration(self, treatment_name: str) -> Optional[Dict[str, Any]]:
+        """Get specific treatment price and duration with fuzzy matching"""
+        async with self.get_connection() as conn:
+            # First try exact match
+            cursor = await conn.execute("""
+                SELECT name, price_range_min, price_range_max, duration_minutes, description
+                FROM treatments 
+                WHERE LOWER(name) = LOWER(?)
+            """, (treatment_name,))
+            treatment = await cursor.fetchone()
+            
+            if treatment:
+                return dict(treatment)
+            
+            # Try fuzzy matching with LIKE
+            cursor = await conn.execute("""
+                SELECT name, price_range_min, price_range_max, duration_minutes, description
+                FROM treatments 
+                WHERE LOWER(name) LIKE LOWER(?) OR LOWER(description) LIKE LOWER(?)
+                ORDER BY 
+                    CASE 
+                        WHEN LOWER(name) LIKE LOWER(?) THEN 1
+                        WHEN LOWER(description) LIKE LOWER(?) THEN 2
+                        ELSE 3
+                    END
+                LIMIT 1
+            """, (f"%{treatment_name}%", f"%{treatment_name}%", f"%{treatment_name}%", f"%{treatment_name}%"))
+            treatment = await cursor.fetchone()
+            
+            return dict(treatment) if treatment else None
+    
+    async def get_multiple_treatments_price_duration(self, treatment_names: List[str]) -> List[Dict[str, Any]]:
+        """Get price and duration for multiple treatments efficiently"""
+        results = []
+        async with self.get_connection() as conn:
+            for name in treatment_names:
+                cursor = await conn.execute("""
+                    SELECT name, price_range_min, price_range_max, duration_minutes, description
+                    FROM treatments 
+                    WHERE LOWER(name) LIKE LOWER(?) OR LOWER(description) LIKE LOWER(?)
+                    ORDER BY 
+                        CASE 
+                            WHEN LOWER(name) LIKE LOWER(?) THEN 1
+                            WHEN LOWER(description) LIKE LOWER(?) THEN 2
+                            ELSE 3
+                        END
+                    LIMIT 1
+                """, (f"%{name}%", f"%{name}%", f"%{name}%", f"%{name}%"))
+                treatment = await cursor.fetchone()
+                if treatment:
+                    results.append(dict(treatment))
+        
+        return results
 
 
 class OptimizedMetricsCollector:

@@ -31,6 +31,8 @@ Greeter → PatientIdentificationAgent → {
 - **Price Ranges**: Realistic pricing for Montreal dental market
 - **Treatment Categories**: Preventive, diagnostic, restorative, endodontic, cosmetic, surgical, periodontal
 - **Search Functionality**: Search treatments by keyword or category
+- **Voice-Optimized Pricing**: Natural speech responses for treatment costs and duration
+- **Fuzzy Matching**: Intelligent treatment name matching for user queries
 
 ### 4. Calendar Integration
 - **Availability Checking**: Validates appointment times against clinic hours
@@ -142,6 +144,11 @@ treatments (
 ### Knowledge Base
 - `get_treatment_info()`: Get treatment details by name/category
 - `search_treatments_by_keyword()`: Search treatments by keyword
+- `get_treatment_price_and_duration()`: **NEW** - Get specific price and duration with voice-optimized responses
+
+### Enhanced Treatment Pricing (NEW)
+- `get_treatment_price_duration()`: Database method with fuzzy matching for treatment names
+- `get_multiple_treatments_price_duration()`: Batch processing for multiple treatment queries
 
 ### Calendar Integration
 - `check_availability()`: Verify appointment slot availability
@@ -184,6 +191,18 @@ The database will be automatically initialized with:
 1. **InfoAgent**: "I can help you with treatment information. What would you like to know about?"
 2. **Search**: "I found several treatments related to 'cleaning'..."
 3. **Details**: "Basic cleaning costs $120-150 and takes about 45 minutes..."
+
+### Treatment Price & Duration Queries (NEW)
+1. **Customer**: "How much does a root canal cost?"
+2. **InfoAgent**: "For Root Canal, the cost is between 800 and 1200 dollars and the appointment typically takes 1 hour and 30 minutes. This treatment involves treatment for infected tooth pulp."
+3. **Customer**: "What about a cleaning?"
+4. **InfoAgent**: "For Basic Cleaning, the cost is between 120 and 150 dollars and the appointment typically takes 45 minutes. This treatment involves regular dental cleaning and polishing."
+
+### Voice-Optimized Features
+- **Natural Duration Format**: "1 hour and 30 minutes" instead of "90 minutes"
+- **Conversational Pricing**: "between 120 and 150 dollars" instead of "$120-$150"
+- **Fuzzy Matching**: "cleaning" matches "Basic Cleaning", "root canal" matches "Root Canal"
+- **Context Tracking**: Stores requested treatment for seamless booking workflow
 
 ## Privacy & Security
 
